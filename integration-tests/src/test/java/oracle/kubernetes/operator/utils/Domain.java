@@ -64,8 +64,12 @@ public class Domain {
   private static int waitTime = BaseTest.getWaitTimePod();
 
   public Domain(String inputYaml) throws Exception {
+    // read input domain yaml to test
+    this(TestUtils.loadYaml(inputYaml));
+  }
 
-    initialize(inputYaml);
+  public Domain(Map<String, Object> inputDomainMap) throws Exception {
+    initialize(inputDomainMap);
     createPV();
     createSecret();
     generateInputYaml();
@@ -209,7 +213,7 @@ public class Domain {
 
     // logger.info("Inside verifyAdminServerExternalService");
     if (exposeAdminNodePort) {
-      String nodePortHost = TestUtils.getHostName();
+      String nodePortHost = getHostNameForCurl();
       String nodePort = getNodePort();
       logger.info("nodePortHost " + nodePortHost + " nodePort " + nodePort);
 
@@ -378,11 +382,7 @@ public class Domain {
     if (!loadBalancer.equals("NONE")) {
       // url
       StringBuffer testAppUrl = new StringBuffer("http://");
-      testAppUrl
-          .append(TestUtils.getHostName())
-          .append(":")
-          .append(loadBalancerWebPort)
-          .append("/");
+      testAppUrl.append(getHostNameForCurl()).append(":").append(loadBalancerWebPort).append("/");
       if (loadBalancer.equals("APACHE")) {
         testAppUrl.append("weblogic/");
       }
@@ -614,7 +614,7 @@ public class Domain {
       logger.info("This check is done only for APACHE load balancer");
       return;
     }
-    String nodePortHost = TestUtils.getHostName();
+    String nodePortHost = getHostNameForCurl();
     int nodePort = getAdminSericeLBNodePort();
     String responseBodyFile =
         userProjectsDir + "/weblogic-domains/" + domainUid + "/testconsole.response.body";
@@ -717,16 +717,8 @@ public class Domain {
     weblogicDomainStorageReclaimPolicy = (String) pvMap.get("weblogicDomainStorageReclaimPolicy");
     weblogicDomainStorageSize = (String) pvMap.get("weblogicDomainStorageSize");
 
-    // test NFS for domain5 on JENKINS
-    if (domainUid.equals("domain6")
-        && (System.getenv("JENKINS") != null
-            && System.getenv("JENKINS").equalsIgnoreCase("true"))) {
-      pvMap.put("weblogicDomainStorageType", "NFS");
-      pvMap.put("weblogicDomainStorageNFSServer", TestUtils.getHostName());
-    } else {
-      pvMap.put("weblogicDomainStorageType", "HOST_PATH");
-      pvMap.put("weblogicDomainStorageNFSServer", TestUtils.getHostName());
-    }
+    pvMap.put("weblogicDomainStorageNFSServer", TestUtils.getHostName());
+
     // set pv path
     domainMap.put(
         "weblogicDomainStoragePath",
@@ -839,7 +831,7 @@ public class Domain {
 
     loadBalancer = (String) lbMap.get("loadBalancer");
 
-    if (domainUid.equals("domain7") && loadBalancer.equals("APACHE")) {
+    if (loadBalancer.equals("APACHE")) {
       /* lbMap.put("loadBalancerAppPrepath", "/weblogic");
       lbMap.put("loadBalancerExposeAdminPort", new Boolean(true)); */
     }
@@ -962,12 +954,11 @@ public class Domain {
     }
   }
 
-  private void initialize(String inputYaml) throws Exception {
+  private void initialize(Map<String, Object> inputDomainMap) throws Exception {
+    domainMap = inputDomainMap;
     this.userProjectsDir = BaseTest.getUserProjectsDir();
     this.projectRoot = BaseTest.getProjectRoot();
 
-    // read input domain yaml to test
-    domainMap = TestUtils.loadYaml(inputYaml);
     domainMap.put("domainName", domainMap.get("domainUID"));
 
     // read sample domain inputs
@@ -1009,9 +1000,9 @@ public class Domain {
 
     domainMap.put("domainHome", "/shared/domains/" + domainUid);
     domainMap.put("logHome", "/shared/logs/" + domainUid);
-    domainMap.put(
-        "createDomainFilesDir",
-        BaseTest.getProjectRoot() + "/integration-tests/src/test/resources/domain-home-on-pv");
+    /* domainMap.put(
+    "createDomainFilesDir",
+    BaseTest.getProjectRoot() + "/integration-tests/src/test/resources/domain-home-on-pv"); */
     String imageName = "store/oracle/weblogic";
     if (System.getenv("IMAGE_NAME_WEBLOGIC") != null) {
       imageName = System.getenv("IMAGE_NAME_WEBLOGIC");
@@ -1137,6 +1128,27 @@ public class Domain {
               + domainUid
               + " does not exist or no NodePort is not configured "
               + "for the admin server in domain.");
+    }
+  }
+
+  private String getHostNameForCurl() throws Exception {
+    if (System.getenv("K8S_NODEPORT_HOST") != null) {
+      return System.getenv("K8S_NODEPORT_HOST");
+    } else {
+      // ExecResult result = ExecCommand.exec("hostname | awk -F. '{print $1}'");
+      ExecResult result1 =
+          ExecCommand.exec("kubectl get nodes -o=jsonpath='{range .items[0]}{.metadata.name}'");
+      if (result1.exitValue() != 0) {
+        throw new RuntimeException("FAILURE: Could not get K8s Node name");
+      }
+      ExecResult result2 =
+          ExecCommand.exec(
+              "nslookup " + result1.stdout() + " | grep \"^Name\" | awk '{ print $2 }'");
+      if (result2.stdout().trim().equals("")) {
+        return result1.stdout().trim();
+      } else {
+        return result2.stdout().trim();
+      }
     }
   }
 }
